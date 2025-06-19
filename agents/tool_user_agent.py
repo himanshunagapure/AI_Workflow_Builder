@@ -264,6 +264,8 @@ class ToolDiscovery:
         tool_scores = []
         query_lower = query.lower()
         
+        self._load_all_tools()
+
         for tool in self.all_tools:
             # Score based on name and description similarity
             name_score = self._calculate_similarity(query_lower, tool.name.lower())
@@ -435,6 +437,7 @@ def analyze_required_tools(user_query: str, available_tools: List[Tool]) -> Dict
         
         tool_descriptions.append(f"- {tool.name}({', '.join(param_info)}): {tool.description}")
 
+    print("\n Tool Description : ", tool_descriptions)
     analysis_prompt = f"""Analyze the following user query and identify which tools are absolutely necessary to complete the task.
 Consider the following:
 1. Only select tools that are directly required to fulfill the user's request
@@ -579,9 +582,9 @@ def agent_node(state: AgentState):
     execution_step = state.get("execution_step", 0)
     
     # Safety check for maximum execution steps
-    if execution_step > 10:
+    if execution_step > 6:
         return {
-            "messages": [AIMessage(content="⚠️ Maximum execution steps reached. Task completed with available results.")],
+            "messages": [AIMessage(content="⚠️ Maximum execution steps reached (currently 6 steps only). Task completed with available results.")],
             "workflow_complete": True,
             "execution_step": execution_step
         }
@@ -596,7 +599,7 @@ def agent_node(state: AgentState):
     
     # Find relevant tools for the entire query
     relevant_tools = tool_discovery.find_relevant_tools(user_query)
-    
+    print("\n Relevant tools detected: ", relevant_tools)
     if not relevant_tools:
         return {
             "messages": [AIMessage(content="❌ No relevant tools found for your request. Please try rephrasing your query.")],
@@ -914,11 +917,11 @@ def should_continue(state: AgentState) -> Literal["agent", "check_confirmations"
     print(f"\nInside should_continue: Execution step: {execution_step}")
     
     # Continue if we have remaining tools and haven't exceeded max steps
-    if len(remaining_tools) > 0 and execution_step < 15:
+    if len(remaining_tools) > 0 and execution_step < 6:
         return "agent"
     
     # Mark as complete if all tools are executed or max steps reached
-    if len(remaining_tools) == 0 or execution_step >= 15:
+    if len(remaining_tools) == 0 or execution_step >= 5:
         state["workflow_complete"] = True
         return "check_confirmations"
     
@@ -1111,7 +1114,7 @@ def test_agent():
     #     "Find top 5 news articles about Elon Musk, analyze sentiment and provide summary"  #✅
     # ]
     test_queries = [  
-        "Get current price of stock AAPL and get me the top 10 news on it" 
+        "Find top 5 news articles about Elon Musk, provide summary and count the frequency of words from summary" 
     ]
     
     for i, query in enumerate(test_queries, 1):
