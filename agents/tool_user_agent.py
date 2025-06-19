@@ -255,7 +255,7 @@ class ToolDiscovery:
         print(f"📊 Total tools loaded: {len(self.all_tools)} "
               f"(Static: {len(self.static_tools)}, Dynamic: {len(self.dynamic_tools)})")
     
-    def find_relevant_tools(self, query: str, max_tools: int = 10) -> List[Tool]:
+    def find_relevant_tools(self, query: str, max_tools: int = 20) -> List[Tool]:
         """Find tools relevant to the query using semantic similarity"""
         if not self.all_tools:
             return []
@@ -480,7 +480,7 @@ Format your response as a JSON object with this structure:
         response = analysis_llm.invoke([HumanMessage(content=analysis_prompt)])
         
         # Parse the JSON response
-        print(f"Analysis response: {response.content}")
+        #print(f"Analysis response: {response.content}")
         
         response_content = response.content.strip()
         # Remove markdown code blocks if present
@@ -578,11 +578,8 @@ def agent_node(state: AgentState):
     intermediate_results = state.get("intermediate_results", {})
     execution_step = state.get("execution_step", 0)
     
-    print(f"\nAgent node execution step: {execution_step}")
-    print(f"\nAgent node intermediate results: {intermediate_results}")
-    
     # Safety check for maximum execution steps
-    if execution_step > 15:
+    if execution_step > 10:
         return {
             "messages": [AIMessage(content="⚠️ Maximum execution steps reached. Task completed with available results.")],
             "workflow_complete": True,
@@ -645,9 +642,7 @@ def agent_node(state: AgentState):
             
             status = "EXECUTED" if tool.name in executed_tools else "PENDING"
             tool_descriptions.append(f"- {tool.name}({', '.join(param_info)}): {tool.description} [{status}]")
-    
-    print(f"\nAgent node tool descriptions: {tool_descriptions}")
-    
+        
     # Add current state information to system message
     state_info = "\nCURRENT STATE:\n"
     if intermediate_results:
@@ -709,8 +704,6 @@ Current session: {session_id}
 User query: {user_query}
 """)
     
-    
-
     # Format tools for Gemini
     formatted_tools = []
     for tool in relevant_tools:
@@ -1115,9 +1108,10 @@ def test_agent():
     #     "Find stock price of APPL, find ceo name, get company financials"    #✅
     #     "Find weather in Nagpur, India"    #✅
     #     "Find stock price of APPL, find top 5 news articles about AAPL, find weather in Nagpur, India"    #✅
+    #     "Find top 5 news articles about Elon Musk, analyze sentiment and provide summary"  #✅
     # ]
-    test_queries = [
-        "Find stock price of APPL, find top 5 news articles about AAPL, find weather in Nagpur, India"    
+    test_queries = [  
+        "Get current price of stock AAPL and get me the top 10 news on it" 
     ]
     
     for i, query in enumerate(test_queries, 1):

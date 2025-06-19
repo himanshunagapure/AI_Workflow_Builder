@@ -1,6 +1,7 @@
+# get_stock_price.py
 import yfinance as yf
 
-def fetch_stock_price(ticker: str) -> float | None:
+def get_stock_price(ticker: str) -> float | None:
     """
     Fetch the current stock price for a given ticker symbol.
     
@@ -11,7 +12,7 @@ def fetch_stock_price(ticker: str) -> float | None:
         float | None: The current stock price if successful, None if there's an error
         
     Example:
-        >>> price = fetch_stock_price("AAPL")
+        >>> price = get_stock_price("AAPL")
         >>> print(price)
         150.25
     """
@@ -22,5 +23,3 @@ def fetch_stock_price(ticker: str) -> float | None:
     except Exception as e:
         print(f"Error: {e}")
         return None
-
-#print(fetch_stock_price("INFY.NS"))

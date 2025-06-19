@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def send_email_alert(to_email: str, subject: str, body: str) -> None:
+def request_email_alert(to_email: str, subject: str, body: str) -> None:
     """
     Send an email alert using Gmail SMTP.
     
@@ -22,7 +22,7 @@ def send_email_alert(to_email: str, subject: str, body: str) -> None:
         - EMAIL_APP_PASSWORD: Gmail app password
         
     Example:
-        >>> send_email_alert("user@example.com", "Stock Alert", "AAPL is above $150")
+        >>> request_email_alert("user@example.com", "Stock Alert", "AAPL is above $150")
     """
     sender_email = os.getenv("EMAIL_APP")
     sender_pass = os.getenv("EMAIL_APP_PASSWORD")
