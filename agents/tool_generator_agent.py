@@ -456,6 +456,24 @@ class CodeGeneratorAgent:
         request_lower = user_request.lower()
         needed_apis = []
         
+        # Enhanced academic/research paper detection
+        academic_keywords = [
+            'academic papers', 'research papers', 'literature review', 'citations',
+            'scholarly articles', 'peer reviewed', 'research gaps', 'bibliographic',
+            'doi', 'pubmed', 'arxiv', 'google scholar', 'crossref'
+        ]
+        
+        # If this is clearly an academic research request, prioritize appropriate APIs
+        is_academic_request = any(keyword in request_lower for keyword in academic_keywords)
+        
+        if is_academic_request:
+            # For academic requests, we primarily need AI for analysis and basic requests for data fetching
+            needed_apis.append('google_genai')  # For analysis, summarization, literature review generation
+            needed_apis.append('requests')      # For web scraping academic sources
+            
+            # Don't detect research topics as APIs for academic requests
+            print("🎓 Detected academic research request - using AI analysis and web scraping APIs")
+            
         # More precise API detection
         api_patterns = {
             'newsapi': ['news', 'headlines', 'articles', 'latest news', 'financial news',
@@ -588,11 +606,15 @@ class CodeGeneratorAgent:
         doc = self.nlp(user_request)
         unknown_apis = []
         
-        # **CHANGE 4: Extract organizations using spaCy's pre-trained NER**
+        # Extract organizations using spaCy's pre-trained NER
         for ent in doc.ents:
             if ent.label_ in ["ORG", "PRODUCT"]:  # Organizations and Products
                 api_name = ent.text.lower().strip()
                 
+                #Enhanced filtering for false positives**
+                if self._is_topic_or_concept(api_name):
+                    continue
+            
                 # Remove "api" suffix if present to avoid duplicates
                 if api_name.endswith(' api'):
                     api_name = api_name[:-4].strip()
@@ -705,6 +727,42 @@ class CodeGeneratorAgent:
         }
         return word.lower() in generic_terms
     
+    def _is_topic_or_concept(self, text: str) -> bool:
+        """
+        Ultra-simple but effective classifier using weighted keyword scoring.
+        Returns True if text is about a topic/concept, False if it's an API/technical request.
+        """
+        text = text.lower().strip()
+        
+        # API/Technical indicators (negative score = more likely API)
+        api_score = sum([
+            text.count('api') * 3,
+            text.count('endpoint') * 3,
+            text.count('request') * 2,
+            text.count('response') * 2,
+            text.count('json') * 2,
+            text.count('http') * 2,
+            len(re.findall(r'\b(get|post|put|delete|patch)\b', text)) * 2,
+            len(re.findall(r'\b(implement|integrate|code|function|method)\b', text)) * 2,
+            len(re.findall(r'\bhow\s+to\s+(use|call|access|implement)', text)) * 3,
+            text.count('documentation') * 2,
+            text.count('auth') * 2,
+            text.count('token') * 2,
+            1 if re.search(r'[{}()\[\]<>]', text) else 0,  # Code syntax
+        ])
+        
+        # Topic/Concept indicators (positive score = more likely topic)
+        topic_score = sum([
+            len(re.findall(r'\b(what|why|explain|define)\b', text)) * 3,
+            len(re.findall(r'\b(vs|versus|compared?\s+to|difference)', text)) * 3,
+            len(re.findall(r'\b(about|regarding|concept|theory|principle)', text)) * 2,
+            len(re.findall(r'\b(research|study|analysis|literature)', text)) * 2,
+            len(re.findall(r'\b(understand|learn|explore|overview)', text)) * 2,
+            text.count('?') * 1,  # Questions often indicate conceptual queries
+        ])
+        
+        return topic_score >= api_score
+
     def _detect_unknown_apis(self, user_request: str) -> List[str]:
         """Detect potential API names that are not in our available_apis catalog."""
         request_lower = user_request.lower()
@@ -1085,7 +1143,12 @@ class CodeGeneratorAgent:
                     
                     # Check if any required APIs failed
                     if failed_required:
-                        return False, detected_apis, f"Required APIs not configured: {', '.join(failed_required)}. Cannot generate code without these APIs."
+                        print(f"\n⚠️  Required APIs not configured: {', '.join(failed_required)}")
+                        proceed_choice = input("Continue without these APIs? This may limit functionality. (y/n): ").strip().lower()
+                        if proceed_choice != 'y':
+                            return False, detected_apis, f"Required APIs not configured: {', '.join(failed_required)}. Cannot generate code without these APIs."
+                        else:
+                            print(f"⚠️  Continuing without: {', '.join(failed_required)}")
                     
                     if successfully_configured:
                         print(f"\n✅ Successfully configured: {', '.join(successfully_configured)}")
@@ -1094,7 +1157,13 @@ class CodeGeneratorAgent:
                 else:
                     # Check if there are required APIs that user chose not to configure
                     if required_apis:
-                        return False, detected_apis, f"Required APIs ({', '.join(required_apis)}) not configured. Cannot generate code without these APIs."
+                        print(f"\n⚠️  Skipping required APIs: {', '.join(required_apis)}")
+                        proceed_choice = input("Continue without these APIs? This may limit functionality. (y/n): ").strip().lower()
+                        if proceed_choice != 'y':
+                            return False, detected_apis, f"Required APIs ({', '.join(required_apis)}) not configured. Cannot generate code without these APIs."
+                        else:
+                            print(f"⚠️  Continuing without: {', '.join(required_apis)}")
+                    
                     else:
                         print("⚠️  Continuing without additional APIs...")
             else:
@@ -1340,136 +1409,204 @@ class CodeGeneratorAgent:
     def generate_tool_code(self, user_request: str, detected_apis: List[str]) -> Tuple[str, List[str]]:
         """Generate code only for validated requests with confirmed APIs."""
         
-        # Create enhanced prompt with strict API usage
-        api_info = ""
-        if detected_apis:
-            for api in detected_apis:
-                if api in self.available_apis:
-                    api_data = self.available_apis[api]
-                    api_info += f"\n- {api}: {api_data['description']}"
-                    api_info += f"\n  Capabilities: {', '.join(api_data['capabilities'])}"
-                    api_info += f"\n  Limitations: {api_data['limitations']}"
-                    if api == 'google_genai':
-                        api_info += f"\n  Import: from langchain_google_genai import ChatGoogleGenerativeAI"
-                        api_info += f"\n  Model: gemini-2.0-flash"
+        max_retries = 3
+        retry_count = 0
+        additional_instructions = ""
+        
+        while retry_count < max_retries:
+            try:
+                # Create enhanced prompt with strict API usage
+                api_info = ""
+                if detected_apis:
+                    for api in detected_apis:
+                        if api in self.available_apis:
+                            api_data = self.available_apis[api]
+                            api_info += f"\n- {api}: {api_data['description']}"
+                            api_info += f"\n  Capabilities: {', '.join(api_data['capabilities'])}"
+                            api_info += f"\n  Limitations: {api_data['limitations']}"
+                            if api == 'google_genai':
+                                api_info += f"\n  Import: from langchain_google_genai import ChatGoogleGenerativeAI"
+                                api_info += f"\n  Model: gemini-2.0-flash"
+                            else:
+                                api_info += f"\n  Import: {api_data['import_statement']}"
+                            if api_data['requires_key']:
+                                if isinstance(api_data['key_name'], list):
+                                    keys = ", ".join([f"os.getenv('{key}')" for key in api_data['key_name']])
+                                    api_info += f"\n  Keys: {keys}"
+                                else:
+                                    api_info += f"\n  Key: os.getenv('{api_data['key_name']}')"
+                else:
+                    print("\nNO APIs detected\n")
+                
+                # Add additional instructions based on previous failures
+                retry_instructions = ""
+                if retry_count > 0:
+                    retry_instructions = f"\n\nIMPORTANT - PREVIOUS ATTEMPT FAILED: {additional_instructions}\n"
+                    retry_instructions += "CRITICAL FIXES REQUIRED:\n"
+                    retry_instructions += "1. NEVER use words like 'placeholder', 'simulated', 'fake', 'mock', 'dummy' in variable names or comments\n"
+                    retry_instructions += "2. ALL code blocks MUST be properly indented with 4 spaces\n"
+                    retry_instructions += "3. Every if, for, while, try, def statement MUST have properly indented content\n"
+                    retry_instructions += "4. Use REAL API calls, REAL data processing, NO simulation\n"
+                    retry_instructions += "5. Variable names should be descriptive but not contain simulation-related words\n"
+
+                prompt = f"""
+    You are creating a Python function for: "{user_request}"
+
+    {retry_instructions}
+
+    STRICT REQUIREMENTS:
+    1. If APIs are needed, use ONLY these verified APIs: {', '.join(detected_apis) if detected_apis else 'None (Basic Python)'}
+    2. Do NOT use any other APIs or create placeholder implementations
+    3. Include comprehensive error handling
+    4. Add rate limiting considerations if using APIs
+    5. Return structured data with clear success/error status
+    6. Include appropriate usage disclaimers
+
+    CRITICAL FUNCTION DESIGN REQUIREMENTS:
+    1. Functions must be fully self-contained and runnable without manual code modifications and unnecessary parameters
+    2. If using APIs, all API keys must be retrieved using os.getenv() INSIDE the function
+    3. NO function parameters for API keys or configuration
+    4. Use ONLY these verified APIs: {', '.join(detected_apis) if detected_apis else 'None (Basic Python)'}
+    4. Functions should have minimal or no parameters (only essential business logic parameters)
+    5. All required data (API keys, credentials) must be auto-injected from environment variables
+    6. It should only have parameters specified in user_request. Example: user_request = "Calculate factorial of a number" 
+    then generated function definition should be like "def calculate_factorial(n)" Here n is parameter from user_request
+    7. The function must be immediately executable without any code modifications
+
+    CRITICAL PYTHON SYNTAX REQUIREMENTS:
+    1. Use 4 spaces for indentation (NO tabs)
+    2. Maintain consistent indentation throughout the code
+    3. Follow PEP 8 style guidelines
+    4. Properly indent all code blocks (if, for, while, try, etc.)
+    5. Properly indent function definitions and their contents
+    6. Properly indent class definitions and their methods
+    7. Ensure all code blocks are properly closed
+    8. Use proper line breaks between functions and classes
+    9. Ensure all parentheses, brackets, and braces are properly closed
+    10. Use proper spacing around operators and after commas
+    11. EVERY if statement MUST have an indented block after the colon
+    12. EVERY function definition MUST have an indented block after the colon
+
+    CRITICAL ANTI-SIMULATION REQUIREMENTS:
+    1. NEVER create simulated/fake/placeholder data
+    2. NEVER use hardcoded values as substitutes for real API data
+    3. If user-specific data is needed, make it a function parameter
+    4. If sensitive data is needed, retrieve it from environment variables
+    5. If optional configuration is needed, provide it as a parameter with default value
+    6. NEVER calculate fake values or simulate responses
+    7. NEVER return mock data when real API calls fail
+    8. If you cannot get real data, return an error message - DO NOT simulate
+    9. NEVER use words like 'placeholder', 'simulated', 'fake', 'mock', 'dummy' in code
+    10. Use descriptive variable names like 'research_data', 'api_response', 'processed_results'
+
+    {api_info if detected_apis else "This is a basic Python implementation that does not require external APIs."}
+
+    Create a single, complete function that:
+    - Is fully self-contained and requires NO external parameters for API keys and NO manual code modifications
+    - If using APIs, retrieves all API keys using os.getenv() inside the function
+    - Handles all specified requirements within API limitations (if any)
+    - Includes proper input validation
+    - Has comprehensive error handling
+    - Is syntactically correct Python code with proper indentation
+    - Returns meaningful Real results or clear error messages
+    - Includes rate limiting awareness if using APIs
+    - Has detailed docstring with limitations
+    - Has NO hardcoded values requiring manual replacement
+    - NEVER simulates or creates fake data
+    - Can be executed immediately with only required parameter passing
+    - Uses real variable names (not simulation-related words)
+
+    Do NOT:
+    - Create placeholder implementations for missing APIs
+    - Promise capabilities beyond available APIs
+    - Use external APIs not listed above
+    - Make unrealistic accuracy claims
+    - Simulate ANY data - always use real API responses or proper Python implementations
+    - Use inconsistent indentation
+    - Use words like 'placeholder', 'simulated', 'fake', 'mock', 'dummy' anywhere in code
+
+    Format as complete Python code with imports and example usage.
+    """
+                
+                messages = [
+                    SystemMessage(content="You are a code generator expert. Generate code that strictly follows the requirements, syntactically correct, follows PEP 8 style guidelines, uses proper indentation and never simulates data."),
+                    HumanMessage(content=prompt)
+                ]
+                
+                response = self.model.invoke(messages)
+                generated_code = response.content
+                
+                # Clean up the code
+                if "```python" in generated_code:
+                    generated_code = generated_code.split("```python")[1].split("```")[0].strip()
+                elif "```" in generated_code:
+                    generated_code = generated_code.split("```")[1].strip()
+                
+                # Clean up indentation
+                try:
+                    generated_code = self._cleanup_code_indentation(generated_code)
+                except Exception as cleanup_error:
+                    if retry_count < max_retries - 1:
+                        additional_instructions = f"Code indentation failed: {str(cleanup_error)}. Ensure ALL code blocks are properly indented with 4 spaces and every if/for/while/try/def statement has indented content."
+                        retry_count += 1
+                        print(f"⚠️  Retry {retry_count}/{max_retries}: Indentation error - {cleanup_error}")
+                        continue
                     else:
-                        api_info += f"\n  Import: {api_data['import_statement']}"
-                    if api_data['requires_key']:
-                        if isinstance(api_data['key_name'], list):
-                            keys = ", ".join([f"os.getenv('{key}')" for key in api_data['key_name']])
-                            api_info += f"\n  Keys: {keys}"
-                        else:
-                            api_info += f"\n  Key: os.getenv('{api_data['key_name']}')"
-        else:
-            print("\nNO APIs detected\n")
+                        raise Exception(f"Code indentation failed after {max_retries} attempts: {str(cleanup_error)}")
+                
+                # Inject API key retrieval inside functions
+                generated_code = self._inject_api_key_retrieval(generated_code, detected_apis)
+
+                # POST-GENERATION VALIDATION: Check for simulation patterns
+                simulation_patterns = [
+                    'simulated_', 'fake_', 'mock_', 'placeholder', 'dummy_',
+                    'test_data', 'sample_data', '# simulate', '# fake', '# mock'
+                ]
+                
+                found_patterns = []
+                for pattern in simulation_patterns:
+                    if pattern in generated_code.lower():
+                        found_patterns.append(pattern)
+                
+                if found_patterns:
+                    if retry_count < max_retries - 1:
+                        additional_instructions = f"Code contains forbidden simulation patterns: {', '.join(found_patterns)}. Use REAL implementations with actual API calls and data processing. Replace simulation patterns with real variable names like 'research_data', 'api_response', 'processed_results'."
+                        retry_count += 1
+                        print(f"⚠️  Retry {retry_count}/{max_retries}: Found simulation patterns - {', '.join(found_patterns)}")
+                        continue
+                    else:
+                        raise Exception(f"Generated code contains simulation patterns after {max_retries} attempts: {', '.join(found_patterns)}. Real API implementation required.")
+                
+                # Validate syntax
+                try:
+                    compile(generated_code, '<string>', 'exec')
+                except SyntaxError as syntax_error:
+                    if retry_count < max_retries - 1:
+                        additional_instructions = f"Syntax error: {str(syntax_error)}. Ensure proper Python syntax, correct indentation (4 spaces), and all code blocks are properly structured."
+                        retry_count += 1
+                        print(f"⚠️  Retry {retry_count}/{max_retries}: Syntax error - {syntax_error}")
+                        continue
+                    else:
+                        raise Exception(f"Syntax error persists after {max_retries} attempts: {str(syntax_error)}")
+                
+                # If we reach here, code generation was successful
+                print(f"✅ Code generation successful on attempt {retry_count + 1}")
+                return generated_code, detected_apis
+                
+            except Exception as e:
+                if retry_count < max_retries - 1:
+                    retry_count += 1
+                    if "simulation pattern" in str(e).lower():
+                        additional_instructions = f"Previous error: {str(e)}. Use REAL variable names and implementations, no simulation words."
+                    elif "indentation" in str(e).lower():
+                        additional_instructions = f"Previous error: {str(e)}. Ensure ALL code blocks use 4-space indentation."
+                    else:
+                        additional_instructions = f"Previous error: {str(e)}. Fix this specific issue."
+                    print(f"⚠️  Retry {retry_count}/{max_retries}: {str(e)}")
+                    continue
+                else:
+                    raise Exception(f"Error generating code after {max_retries} attempts: {str(e)}")
         
-        prompt = f"""
-You are creating a Python function for: "{user_request}"
-
-STRICT REQUIREMENTS:
-1. If APIs are needed, use ONLY these verified APIs: {', '.join(detected_apis) if detected_apis else 'None (Basic Python)'}
-2. Do NOT use any other APIs or create placeholder implementations
-3. Include comprehensive error handling
-4. Add rate limiting considerations if using APIs
-5. Return structured data with clear success/error status
-6. Include appropriate usage disclaimers
-
-CRITICAL FUNCTION DESIGN REQUIREMENTS:
-1. Functions must be fully self-contained and runnable without manual code modifications and unnecessary parameters
-2. If using APIs, all API keys must be retrieved using os.getenv() INSIDE the function
-3. NO function parameters for API keys or configuration
-4. Use ONLY these verified APIs: {', '.join(detected_apis) if detected_apis else 'None (Basic Python)'}
-4. Functions should have minimal or no parameters (only essential business logic parameters)
-5. All required data (API keys, credentials) must be auto-injected from environment variables
-6. It should only have parameters specified in user_request. Example: user_request = "Calculate factorial of a number" 
-then generated function definition should be like "def calculate_factorial(n)" Here n is parameter from user_request
-7. The function must be immediately executable without any code modifications
-
-CRITICAL PYTHON SYNTAX REQUIREMENTS:
-1. Use 4 spaces for indentation (NO tabs)
-2. Maintain consistent indentation throughout the code
-3. Follow PEP 8 style guidelines
-4. Properly indent all code blocks (if, for, while, try, etc.)
-5. Properly indent function definitions and their contents
-6. Properly indent class definitions and their methods
-7. Ensure all code blocks are properly closed
-8. Use proper line breaks between functions and classes
-9. Ensure all parentheses, brackets, and braces are properly closed
-10. Use proper spacing around operators and after commas
-
-CRITICAL ANTI-SIMULATION REQUIREMENTS:
-1. NEVER create simulated/fake/placeholder data
-2. NEVER use hardcoded values as substitutes for real API data
-3. If user-specific data is needed, make it a function parameter
-4. If sensitive data is needed, retrieve it from environment variables
-5. If optional configuration is needed, provide it as a parameter with default value
-6. NEVER calculate fake values or simulate responses
-7. NEVER return mock data when real API calls fail
-8. If you cannot get real data, return an error message - DO NOT simulate
-
-{api_info if detected_apis else "This is a basic Python implementation that does not require external APIs."}
-
-Create a single, complete function that:
-- Is fully self-contained and requires NO external parameters for API keys and NO manual code modifications
-- If using APIs, retrieves all API keys using os.getenv() inside the function
-- Handles all specified requirements within API limitations (if any)
-- Includes proper input validation
-- Has comprehensive error handling
-- Is syntactically correct Python code with proper indentation
-- Returns meaningful Real results or clear error messages
-- Includes rate limiting awareness if using APIs
-- Has detailed docstring with limitations
-- Has NO hardcoded values requiring manual replacement
-- NEVER simulates or creates fake data
-- Can be executed immediately with only required parameter passing
-
-Do NOT:
-- Create placeholder implementations for missing APIs
-- Promise capabilities beyond available APIs
-- Use external APIs not listed above
-- Make unrealistic accuracy claims
-- Simulate ANY data - always use real API responses or proper Python implementations
-- Use inconsistent indentation
-
-Format as complete Python code with imports and example usage.
-"""
-        
-        try:
-            messages = [
-                SystemMessage(content="You are a code generator expert. Generate code that strictly follows the requirements, syntactically correct, follows PEP 8 style guidelines, uses proper indentation and never simulates data."),
-                HumanMessage(content=prompt)
-            ]
-            
-            response = self.model.invoke(messages)
-            generated_code = response.content
-            
-            # Clean up the code
-            if "```python" in generated_code:
-                generated_code = generated_code.split("```python")[1].split("```")[0].strip()
-            elif "```" in generated_code:
-                generated_code = generated_code.split("```")[1].strip()
-            
-            # Clean up indentation
-            generated_code = self._cleanup_code_indentation(generated_code)
-            
-            # Inject API key retrieval inside functions
-            generated_code = self._inject_api_key_retrieval(generated_code, detected_apis)
-
-            # POST-GENERATION VALIDATION: Check for simulation patterns
-            simulation_patterns = [
-                'simulated_price', 'fake_price', 'mock_price', 'placeholder',
-                '100.0 +', '* 0.5', 'mock_data', 'fake_data', 'dummy_data'
-            ]
-            
-            for pattern in simulation_patterns:
-                if pattern in generated_code.lower():
-                    raise Exception(f"Generated code contains simulation pattern: '{pattern}'. Real API implementation required.")
-            
-            return generated_code, detected_apis
-            
-        except Exception as e:
-            raise Exception(f"Error generating code: {str(e)}")
-    
     def _inject_api_key_retrieval(self, code: str, detected_apis: List[str]) -> str:
         """Ensure API keys are retrieved inside functions instead of passed as parameters."""
         
@@ -1516,48 +1653,76 @@ Format as complete Python code with imports and example usage.
     def _cleanup_code_indentation(self, code: str) -> str:
         """Clean up code indentation to ensure it follows Python standards."""
         try:
+            # First, try to compile as-is
+            compile(code, '<string>', 'exec')
+            return code
+        except SyntaxError:
+            pass
+        
+        try:
             # Split code into lines
             lines = code.split('\n')
             cleaned_lines = []
-            current_indent = 0
+            indent_level = 0
             in_multiline_string = False
+            quote_char = None
             
-            for line in lines:
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                
                 # Skip empty lines
-                if not line.strip():
+                if not stripped:
                     cleaned_lines.append('')
                     continue
                 
                 # Handle multiline strings
-                if '"""' in line or "'''" in line:
-                    in_multiline_string = not in_multiline_string
+                if not in_multiline_string:
+                    if stripped.startswith('"""') or stripped.startswith("'''"):
+                        in_multiline_string = True
+                        quote_char = stripped[:3]
+                else:
+                    if quote_char in line:
+                        in_multiline_string = False
+                        quote_char = None
                 
-                # Skip indentation fixes for lines in multiline strings
-                if in_multiline_string:
+                # Skip indentation fixes for lines in multiline strings (except first line)
+                if in_multiline_string and i > 0:
                     cleaned_lines.append(line)
                     continue
                 
-                # Count leading spaces
-                leading_spaces = len(line) - len(line.lstrip())
+                # Determine proper indentation level
+                if stripped.endswith(':') and any(stripped.startswith(keyword) for keyword in ['def ', 'class ', 'if ', 'for ', 'while ', 'try:', 'except ', 'else:', 'elif ', 'with ']):
+                    # This line should start a new indented block
+                    current_indent = indent_level * 4
+                    cleaned_line = ' ' * current_indent + stripped
+                    indent_level += 1
+                elif any(stripped.startswith(keyword) for keyword in ['else:', 'elif ', 'except ', 'finally:']):
+                    # These should be at the same level as their corresponding block starter
+                    indent_level = max(0, indent_level - 1)
+                    current_indent = indent_level * 4
+                    cleaned_line = ' ' * current_indent + stripped
+                    indent_level += 1
+                elif stripped in ['pass', 'break', 'continue'] or stripped.startswith('return ') or stripped == 'return':
+                    # These should be inside the current block
+                    current_indent = max(0, indent_level * 4)
+                    cleaned_line = ' ' * current_indent + stripped
+                else:
+                    # Regular content line
+                    current_indent = max(0, indent_level * 4)
+                    cleaned_line = ' ' * current_indent + stripped
+                    
+                    # Check if this line reduces indentation (like end of if block)
+                    next_line_idx = i + 1
+                    if next_line_idx < len(lines):
+                        next_stripped = lines[next_line_idx].strip()
+                        if (next_stripped and not next_stripped.startswith('#') and
+                            not any(next_stripped.startswith(kw) for kw in ['else:', 'elif ', 'except ', 'finally:']) and
+                            not any(stripped.endswith(kw) for kw in [':'])):
+                            # Check if we should reduce indent level
+                            if (any(stripped.startswith(kw) for kw in ['return ', 'break', 'continue', 'pass', 'raise ']) or
+                                stripped == 'return'):
+                                indent_level = max(0, indent_level - 1)
                 
-                # Fix indentation to be multiple of 4
-                if leading_spaces % 4 != 0:
-                    # Round to nearest multiple of 4
-                    leading_spaces = (leading_spaces // 4) * 4
-                
-                # Ensure consistent indentation
-                if line.strip().startswith(('def ', 'class ', 'if ', 'for ', 'while ', 'try:', 'except ', 'else:', 'elif ')):
-                    # Reset indentation for new blocks
-                    current_indent = leading_spaces
-                elif line.strip().startswith(('return', 'break', 'continue', 'pass')):
-                    # These should be at the same level as their block
-                    leading_spaces = current_indent
-                elif line.strip().startswith(('else:', 'elif ', 'except ')):
-                    # These should be at the same level as their corresponding if/try
-                    leading_spaces = current_indent
-                
-                # Create properly indented line
-                cleaned_line = ' ' * leading_spaces + line.lstrip()
                 cleaned_lines.append(cleaned_line)
             
             # Join lines back together
@@ -1569,9 +1734,34 @@ Format as complete Python code with imports and example usage.
             return cleaned_code
             
         except Exception as e:
-            # If cleanup fails, return original code
-            print(f"Warning: Code cleanup failed: {str(e)}")
-            return code
+            # If cleanup fails, try a simpler approach
+            lines = code.split('\n')
+            simple_cleaned = []
+            
+            for line in lines:
+                if line.strip():
+                    # Count original leading spaces and normalize to multiples of 4
+                    leading_spaces = len(line) - len(line.lstrip())
+                    normalized_spaces = (leading_spaces // 4) * 4
+                    if line.strip().startswith(('def ', 'class ')):
+                        normalized_spaces = 0  # Top level
+                    elif line.strip().endswith(':'):
+                        pass  # Keep current level
+                    else:
+                        normalized_spaces = max(4, normalized_spaces)  # At least one indent level
+                    
+                    simple_cleaned.append(' ' * normalized_spaces + line.lstrip())
+                else:
+                    simple_cleaned.append('')
+            
+            simple_code = '\n'.join(simple_cleaned)
+            
+            try:
+                compile(simple_code, '<string>', 'exec')
+                return simple_code
+            except:
+                # Last resort: return original code and let the retry mechanism handle it
+                raise Exception(f"Code indentation cleanup failed: {str(e)}")
         
     def _prompt_for_api_keys(self, missing_keys: List[str]) -> Dict[str, str]:
         """Prompt user for missing API keys."""
