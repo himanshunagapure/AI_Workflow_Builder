@@ -68,6 +68,7 @@ def tool_selection_expert(state: AgentState) -> AgentState:
     List tools in a simple format, one per line, with just the filename (e.g. 'get_stock_price.py').
     Do not use numbers, backticks, or any other formatting.
     If all Tools are not available to fulfill the request completely give response as "New Tool Needed"
+    If even a single Tool is missing to solve request completely give response as "New Tool Needed"
     """)
     
     # Get tool analysis from LLM
@@ -127,7 +128,7 @@ def tool_selection_expert(state: AgentState) -> AgentState:
 # Tool Creator Node
 def tool_creator(state: AgentState) -> AgentState:
     """Generates tools using code_generator_agent based on user query."""
-    print("\n🛠️ Tool Creator generating tools...")
+    print("\n============== ⭐🛠️ Tool Creator generating tools... =======================")
     
     # Initialize code generator agent
     code_gen = CodeGeneratorAgent()
@@ -160,7 +161,7 @@ def tool_creator(state: AgentState) -> AgentState:
 # Tool User Node (generalized from stock_monitor)
 def tool_user(state: AgentState) -> AgentState:
     """Executes the query using the generic tool user agent."""
-    print("\n🤖 Tool User executing query...")
+    print("\n==================⭐⚒️ Tool User executing query... =================")
     # Initialize generic reasoning agent
     user_agent = GenericReasoningAgent()
     
@@ -307,9 +308,11 @@ if __name__ == "__main__":
     #     "Find weather in Nagpur, India"    #✅
     #     "Find stock price of APPL, find top 5 news articles about AAPL, find weather in Nagpur, India"    #✅
     #     "Find top 5 news articles about Elon Musk, analyze sentiment and provide summary"  #✅
+    #   "Find top 5 news articles about Elon Musk, provide summary and count the frequency of word 'Elon' from summary" ❌
+    #   ""Find sum of 7 and 10, find the factorial of the output sum and divide it by 2"" #✅
     # ]
     test_queries = [
-        "Find stock price of APPL, find top 5 news articles about AAPL, find weather in Nagpur, India"
+        "Find top 5 news articles about Elon Musk, provide summary and count the frequency of word 'Elon' from summary" 
     ]
     
     for query in test_queries:

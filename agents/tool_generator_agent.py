@@ -1467,12 +1467,20 @@ class CodeGeneratorAgent:
     2. If using APIs, all API keys must be retrieved using os.getenv() INSIDE the function
     3. NO function parameters for API keys or configuration
     4. Use ONLY these verified APIs: {', '.join(detected_apis) if detected_apis else 'None (Basic Python)'}
-    4. Functions should have minimal or no parameters (only essential business logic parameters)
-    5. All required data (API keys, credentials) must be auto-injected from environment variables
-    6. It should only have parameters specified in user_request. Example: user_request = "Calculate factorial of a number" 
-    then generated function definition should be like "def calculate_factorial(n)" Here n is parameter from user_request
-    7. The function must be immediately executable without any code modifications
-
+    5. Functions should have minimal with meaningful defaults when possible or no parameters (only essential business logic parameters)
+    6. All required data (API keys, credentials) must be auto-injected from environment variables
+    7. It should only have parameters specified in user_request. Example: user_request = "Calculate factorial of a number 7" 
+    then generated function definition should be like "def calculate_factorial(n=7)" Here n is parameter from user_request
+    8. The function must be immediately executable without any code modifications
+    9. PARAMETER EXTRACTION RULES:
+       - Analyze the user_request to identify specific values mentioned
+       - If user_request contains specific examples or values (like "AI vs Jobs"), use them as default parameter values
+       - Example: user_request = "Research on topic AI vs Jobs" → function should be def research_and_review(topic="AI vs Jobs")
+       - Example: user_request = "Calculate factorial of a number 7" → function should be def calculate_factorial(n=7)
+       - Example: user_request = "Analyze sentiment of text 'I love this product'" → function should be def analyze_sentiment(text="I love this product")
+       - If no specific value is mentioned, keep parameter without default
+    10. When specific values are mentioned in user_request, incorporate them as defaults to make the function ready-to-run
+    
     CRITICAL PYTHON SYNTAX REQUIREMENTS:
     1. Use 4 spaces for indentation (NO tabs)
     2. Maintain consistent indentation throughout the code
@@ -1515,7 +1523,9 @@ class CodeGeneratorAgent:
     - NEVER simulates or creates fake data
     - Can be executed immediately with only required parameter passing
     - Uses real variable names (not simulation-related words)
-
+    - EXTRACTS and USES specific values from user_request as default parameters when mentioned
+    - Is immediately testable with the default values derived from user_request
+    
     Do NOT:
     - Create placeholder implementations for missing APIs
     - Promise capabilities beyond available APIs

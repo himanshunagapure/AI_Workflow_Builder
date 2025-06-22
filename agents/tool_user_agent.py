@@ -437,7 +437,7 @@ def analyze_required_tools(user_query: str, available_tools: List[Tool]) -> Dict
         
         tool_descriptions.append(f"- {tool.name}({', '.join(param_info)}): {tool.description}")
 
-    print("\n Tool Description : ", tool_descriptions)
+    #print("\n Tool Description : ", tool_descriptions)
     analysis_prompt = f"""Analyze the following user query and identify which tools are absolutely necessary to complete the task.
 Consider the following:
 1. Only select tools that are directly required to fulfill the user's request
